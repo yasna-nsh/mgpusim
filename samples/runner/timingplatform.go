@@ -12,7 +12,7 @@ import (
 	"github.com/sarchlab/akita/v3/mem/vm"
 	"github.com/sarchlab/akita/v3/mem/vm/mmu"
 	"github.com/sarchlab/akita/v3/monitoring"
-	"github.com/sarchlab/akita/v3/noc/networking/pcie"
+	"github.com/sarchlab/akita/v3/noc/networking/nvlink"
 	"github.com/sarchlab/akita/v3/sim"
 	"github.com/sarchlab/akita/v3/tracing"
 	"github.com/sarchlab/mgpusim/v3/driver"
@@ -149,6 +149,46 @@ func (b R9NanoPlatformBuilder) Build() *Platform {
 	gpuDriver := b.buildGPUDriver(pageTable)
 
 	gpuBuilder := b.createGPUBuilder(b.engine, gpuDriver, mmuComponent)
+	connector, rootComplexID :=
+		b.createConnection(b.engine, gpuDriver, mmuComponent)
+
+	mmuComponent.MigrationServiceProvider = gpuDriver.GetPortByName("MMU")
+
+	rdmaAddressTable := b.createRDMAAddrTable()
+	pmcAddressTable := b.createPMCPageTable()
+
+	b.createGPUs(
+		rootComplexID, connector,
+		gpuBuilder, gpuDriver,
+		rdmaAddressTable, pmcAddressTable)
+
+	connector.EstablishRoute()
+
+	return &Platform{
+		Engine: b.engine,
+		Driver: gpuDriver,
+		GPUs:   b.gpus,
+	}
+}
+
+// original code
+/*
+func (b R9NanoPlatformBuilder) Build() *Platform {
+	b.engine = b.createEngine()
+	if b.monitor != nil {
+		b.monitor.RegisterEngine(b.engine)
+	}
+
+	b.setupPerformanceAnalyzer()
+	b.setupVisTracing()
+
+	b.globalStorage = mem.NewStorage(uint64(1+b.numGPU) * 4 * mem.GB)
+
+	mmuComponent, pageTable := b.createMMU(b.engine)
+
+	gpuDriver := b.buildGPUDriver(pageTable)
+
+	gpuBuilder := b.createGPUBuilder(b.engine, gpuDriver, mmuComponent)
 	pcieConnector, rootComplexID :=
 		b.createConnection(b.engine, gpuDriver, mmuComponent)
 
@@ -170,6 +210,7 @@ func (b R9NanoPlatformBuilder) Build() *Platform {
 		GPUs:   b.gpus,
 	}
 }
+*/
 
 func (b R9NanoPlatformBuilder) buildGPUDriver(
 	pageTable vm.PageTable,
@@ -252,6 +293,36 @@ func (b *R9NanoPlatformBuilder) setupPerformanceAnalyzer() {
 
 func (b *R9NanoPlatformBuilder) createGPUs(
 	rootComplexID int,
+	connector *nvlink.Connector,
+	gpuBuilder R9NanoGPUBuilder,
+	gpuDriver *driver.Driver,
+	rdmaAddressTable *mem.BankedLowModuleFinder,
+	pmcAddressTable *mem.BankedLowModuleFinder,
+) {
+	deviceIDs := make([]int, b.numGPU+1)
+
+	// GPU1..N: plugged into PCIe (so they can still reach host storage),
+	pcieSwitchID := connector.AddPCIeSwitch()
+	connector.ConnectSwitchesWithPCIeLink(rootComplexID, pcieSwitchID)
+	for i := 1; i < b.numGPU+1; i++ {
+		gpu := b.createGPU(i, gpuBuilder, gpuDriver,
+			rdmaAddressTable, pmcAddressTable,
+			connector, pcieSwitchID)
+		deviceIDs[i] = connector.PlugInDevice(pcieSwitchID, gpu.Domain.Ports())
+	}
+
+	// then meshed together with NVLink at 300GB/s
+	for i := 1; i < b.numGPU+1; i++ {
+		for j := i + 1; j < b.numGPU+1; j++ {
+			connector.ConnectDevicesWithNVLink(deviceIDs[i], deviceIDs[j], 1)
+		}
+	}
+}
+
+// original code
+/*
+func (b *R9NanoPlatformBuilder) createGPUs(
+	rootComplexID int,
 	pcieConnector *pcie.Connector,
 	gpuBuilder R9NanoGPUBuilder,
 	gpuDriver *driver.Driver,
@@ -269,6 +340,7 @@ func (b *R9NanoPlatformBuilder) createGPUs(
 			pcieConnector, lastSwitchID)
 	}
 }
+*/
 
 func (b R9NanoPlatformBuilder) createPMCPageTable() *mem.BankedLowModuleFinder {
 	pmcAddressTable := new(mem.BankedLowModuleFinder)
@@ -284,6 +356,39 @@ func (b R9NanoPlatformBuilder) createRDMAAddrTable() *mem.BankedLowModuleFinder 
 	return rdmaAddressTable
 }
 
+func (b R9NanoPlatformBuilder) createConnection(
+	engine sim.Engine,
+	gpuDriver *driver.Driver,
+	mmuComponent *mmu.MMU,
+) (*nvlink.Connector, int) {
+	//connection := sim.NewDirectConnection(engine)
+	// connection := noc.NewFixedBandwidthConnection(32, engine, 1*sim.GHz)
+	// connection.SrcBufferCapacity = 40960000
+	connector := nvlink.NewConnector().
+		WithEngine(engine).
+		WithPCIeVersion(4, 16).
+		WithNVLinkVersion(2).
+		WithNVLinkBandwidth(300 * (1 << 30))
+
+	if b.visTracer != nil {
+		// TODO: check this line
+		c := connector.WithVisTracer(b.visTracer)
+		connector = &c
+	}
+
+	connector.CreateNetwork("NVLink")
+	rootComplexID := connector.AddRootComplex(
+		[]sim.Port{
+			gpuDriver.GetPortByName("GPU"),
+			gpuDriver.GetPortByName("MMU"),
+			mmuComponent.GetPortByName("Migration"),
+			mmuComponent.GetPortByName("Top"),
+		})
+	return connector, rootComplexID
+}
+
+// original code
+/*
 func (b R9NanoPlatformBuilder) createConnection(
 	engine sim.Engine,
 	gpuDriver *driver.Driver,
@@ -311,6 +416,7 @@ func (b R9NanoPlatformBuilder) createConnection(
 		})
 	return pcieConnector, rootComplexID
 }
+*/
 
 func (b R9NanoPlatformBuilder) createEngine() sim.Engine {
 	var engine sim.Engine
@@ -412,6 +518,41 @@ func (b *R9NanoPlatformBuilder) createGPU(
 	gpuDriver *driver.Driver,
 	rdmaAddressTable *mem.BankedLowModuleFinder,
 	pmcAddressTable *mem.BankedLowModuleFinder,
+	connector *nvlink.Connector,
+	pcieSwitchID int,
+) *GPU {
+	name := fmt.Sprintf("GPU[%d]", index)
+	memAddrOffset := uint64(index) * 4 * mem.GB
+	gpu := gpuBuilder.
+		WithMemAddrOffset(memAddrOffset).
+		Build(name, uint64(index))
+	gpuDriver.RegisterGPU(
+		gpu.Domain.GetPortByName("CommandProcessor"),
+		driver.DeviceProperties{
+			CUCount:  b.numCUPerSA * b.numSAPerGPU,
+			DRAMSize: 4 * mem.GB,
+		},
+	)
+	gpu.CommandProcessor.Driver = gpuDriver.GetPortByName("GPU")
+
+	b.configRDMAEngine(gpu, rdmaAddressTable)
+	b.configPMC(gpu, gpuDriver, pmcAddressTable)
+
+	// connector.PlugInDevice(pcieSwitchID, gpu.Domain.Ports())
+
+	b.gpus = append(b.gpus, gpu)
+
+	return gpu
+}
+
+// original code
+/*
+func (b *R9NanoPlatformBuilder) createGPU(
+	index int,
+	gpuBuilder R9NanoGPUBuilder,
+	gpuDriver *driver.Driver,
+	rdmaAddressTable *mem.BankedLowModuleFinder,
+	pmcAddressTable *mem.BankedLowModuleFinder,
 	pcieConnector *pcie.Connector,
 	pcieSwitchID int,
 ) *GPU {
@@ -438,6 +579,7 @@ func (b *R9NanoPlatformBuilder) createGPU(
 
 	return gpu
 }
+*/
 
 func (b *R9NanoPlatformBuilder) configRDMAEngine(
 	gpu *GPU,
