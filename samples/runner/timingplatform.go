@@ -43,13 +43,11 @@ type R9NanoPlatformBuilder struct {
 	gpus []*GPU
 
 	migrationPolicy vm.MigrationPolicy
-	accessThreshold int
 	useOASIS        bool
 }
 
-func (b R9NanoPlatformBuilder) WithMigrationPolicy(p vm.MigrationPolicy, threshold int) R9NanoPlatformBuilder {
+func (b R9NanoPlatformBuilder) WithMigrationPolicy(p vm.MigrationPolicy) R9NanoPlatformBuilder {
 	b.migrationPolicy = p
-	b.accessThreshold = threshold
 	return b
 }
 
@@ -241,6 +239,7 @@ func (b R9NanoPlatformBuilder) buildGPUDriver(
 		WithGlobalStorage(b.globalStorage).
 		WithD2HCycles(8500).
 		WithH2DCycles(14500).
+		WithPageMigrationPolicy(b.migrationPolicy).
 		Build("Driver")
 	if b.visTracer != nil {
 		tracing.CollectTrace(gpuDriver, b.visTracer)
@@ -457,7 +456,6 @@ func (b R9NanoPlatformBuilder) createMMU(
 		WithLog2PageSize(b.log2PageSize).
 		WithPageTable(pageTable).
 		WithPageMigrationPolicy(b.migrationPolicy).
-		WithAccessThreshold(b.accessThreshold).
 		WithOASIS(b.useOASIS)
 
 	mmuComponent := mmuBuilder.Build("MMU")

@@ -42,6 +42,5 @@ type GPU struct {
 	MemControllers   []TraceableComponent
 
 	migrationPolicy vm.MigrationPolicy
-	accessThreshold int
 	useOASIS        bool
 }

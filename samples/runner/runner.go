@@ -144,13 +144,13 @@ func (r *Runner) buildTimingPlatform() {
 
 	switch *migrationPolicyFlag {
 	case "on-touch":
-		b = b.WithMigrationPolicy(vm.PolicyOnTouch, 0)
+		b = b.WithMigrationPolicy(vm.PolicyOnTouch)
 	case "access-counter":
-		b = b.WithMigrationPolicy(vm.PolicyAccessCounter, *accessThresholdFlag)
+		b = b.WithMigrationPolicy(vm.PolicyAccessCounter)
 	case "duplication":
-		b = b.WithMigrationPolicy(vm.PolicyDuplication, 0)
+		b = b.WithMigrationPolicy(vm.PolicyDuplication)
 	case "oasis":
-		b = b.WithMigrationPolicy(vm.PolicyOnTouch, 0) // with oasis, default policy is on touch
+		b = b.WithMigrationPolicy(vm.PolicyOnTouch) // with oasis, default policy is on touch
 		b = b.WithOASIS()
 	default:
 		panic("unknown migration policy: " + *migrationPolicyFlag)

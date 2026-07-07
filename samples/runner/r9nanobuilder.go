@@ -81,7 +81,6 @@ type R9NanoGPUBuilder struct {
 	l2ToDramConnection     *sim.DirectConnection
 
 	migrationPolicy vm.MigrationPolicy
-	accessThreshold int
 	useOASIS        bool
 }
 
@@ -123,11 +122,6 @@ func (b R9NanoGPUBuilder) WithMemAddrOffset(
 
 func (b R9NanoGPUBuilder) WithPageMigrationPolicy(policy vm.MigrationPolicy) R9NanoGPUBuilder {
 	b.migrationPolicy = policy
-	return b
-}
-
-func (b R9NanoGPUBuilder) WithAccessThreshold(threshold int) R9NanoGPUBuilder {
-	b.accessThreshold = threshold
 	return b
 }
 
@@ -262,7 +256,6 @@ func (b R9NanoGPUBuilder) Build(name string, id uint64) *GPU {
 	b.populateExternalPorts()
 
 	b.gpu.migrationPolicy = b.migrationPolicy
-	b.gpu.accessThreshold = b.accessThreshold
 	b.gpu.useOASIS = b.useOASIS
 
 	return b.gpu

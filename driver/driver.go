@@ -702,6 +702,7 @@ func (d *Driver) preparePageForMigration(
 	newPage.DeviceID = gpuID + 1
 
 	newPage.IsMigrating = true
+	newPage.MigrationPolicy = page.MigrationPolicy
 	d.pageTable.Update(newPage)
 
 	return &newPage, oldPAddr
