@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"github.com/sarchlab/akita/v3/mem/vm"
 	"github.com/sarchlab/akita/v3/sim"
 	"github.com/sarchlab/akita/v3/tracing"
 	"github.com/sarchlab/mgpusim/v3/driver"
@@ -39,4 +40,8 @@ type GPU struct {
 	L1ITLBs          []TraceableComponent
 	L2TLBs           []TraceableComponent
 	MemControllers   []TraceableComponent
+
+	migrationPolicy vm.MigrationPolicy
+	accessThreshold int
+	useOASIS        bool
 }

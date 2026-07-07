@@ -69,6 +69,10 @@ var visTraceStartTime = flag.Float64("trace-vis-start", -1,
 var visTraceEndTime = flag.Float64("trace-vis-end", -1,
 	"The end time of collecting visualization traces. A negative number"+
 		"means that the trace will be collected to the end of the simulation.")
+var migrationPolicyFlag = flag.String("migration-policy", "on-touch",
+	"Page migration policy: on-touch, access-counter, duplication, oasis")
+var accessThresholdFlag = flag.Int("access-threshold", 256,
+	"Access count threshold for the access-counter policy")
 
 // ParseFlag applies the runner flag to runner object
 //

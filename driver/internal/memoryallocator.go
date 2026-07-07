@@ -28,6 +28,7 @@ type MemoryAllocator interface {
 func NewMemoryAllocator(
 	pageTable vm.PageTable,
 	log2PageSize uint64,
+	defaultPolicy vm.MigrationPolicy,
 ) MemoryAllocator {
 	a := &memoryAllocatorImpl{
 		pageTable:            pageTable,
@@ -36,6 +37,7 @@ func NewMemoryAllocator(
 		processMemoryStates:  make(map[vm.PID]*processMemoryState),
 		vAddrToPageMapping:   make(map[uint64]vm.Page),
 		devices:              make(map[int]*Device),
+		defaultPolicy:        defaultPolicy,
 	}
 	return a
 }
@@ -55,6 +57,7 @@ type memoryAllocatorImpl struct {
 	processMemoryStates  map[vm.PID]*processMemoryState
 	devices              map[int]*Device
 	totalStorageByteSize uint64
+	defaultPolicy        vm.MigrationPolicy
 }
 
 func (a *memoryAllocatorImpl) RegisterDevice(device *Device) {
@@ -152,13 +155,14 @@ func (a *memoryAllocatorImpl) allocatePages(
 		vAddr := nextVAddr + uint64(i)*pageSize
 
 		page := vm.Page{
-			PID:      pid,
-			VAddr:    vAddr,
-			PAddr:    pAddr,
-			PageSize: pageSize,
-			Valid:    true,
-			Unified:  unified,
-			DeviceID: uint64(a.deviceIDByPAddr(pAddr)),
+			PID:             pid,
+			VAddr:           vAddr,
+			PAddr:           pAddr,
+			PageSize:        pageSize,
+			Valid:           true,
+			Unified:         unified,
+			DeviceID:        uint64(a.deviceIDByPAddr(pAddr)),
+			MigrationPolicy: a.defaultPolicy,
 		}
 
 		// fmt.Printf("page.addr is %x piage Device ID is %d \n", page.PAddr, page.DeviceID)

@@ -11,6 +11,7 @@ import (
 	"github.com/sarchlab/akita/v3/mem/cache/writethrough"
 	"github.com/sarchlab/akita/v3/mem/dram"
 	"github.com/sarchlab/akita/v3/mem/mem"
+	"github.com/sarchlab/akita/v3/mem/vm"
 	"github.com/sarchlab/akita/v3/mem/vm/addresstranslator"
 	"github.com/sarchlab/akita/v3/mem/vm/mmu"
 	"github.com/sarchlab/akita/v3/mem/vm/tlb"
@@ -78,6 +79,10 @@ type R9NanoGPUBuilder struct {
 	l1TLBToL2TLBConnection *sim.DirectConnection
 	l1ToL2Connection       *sim.DirectConnection
 	l2ToDramConnection     *sim.DirectConnection
+
+	migrationPolicy vm.MigrationPolicy
+	accessThreshold int
+	useOASIS        bool
 }
 
 // MakeR9NanoGPUBuilder provides a GPU builder that can builds the R9Nano GPU.
@@ -113,6 +118,21 @@ func (b R9NanoGPUBuilder) WithMemAddrOffset(
 	offset uint64,
 ) R9NanoGPUBuilder {
 	b.memAddrOffset = offset
+	return b
+}
+
+func (b R9NanoGPUBuilder) WithPageMigrationPolicy(policy vm.MigrationPolicy) R9NanoGPUBuilder {
+	b.migrationPolicy = policy
+	return b
+}
+
+func (b R9NanoGPUBuilder) WithAccessThreshold(threshold int) R9NanoGPUBuilder {
+	b.accessThreshold = threshold
+	return b
+}
+
+func (b R9NanoGPUBuilder) WithOASIS(oasis bool) R9NanoGPUBuilder {
+	b.useOASIS = oasis
 	return b
 }
 
@@ -240,6 +260,10 @@ func (b R9NanoGPUBuilder) Build(name string, id uint64) *GPU {
 	b.connectL1TLBToL2TLB()
 
 	b.populateExternalPorts()
+
+	b.gpu.migrationPolicy = b.migrationPolicy
+	b.gpu.accessThreshold = b.accessThreshold
+	b.gpu.useOASIS = b.useOASIS
 
 	return b.gpu
 }

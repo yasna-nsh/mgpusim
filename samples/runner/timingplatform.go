@@ -41,6 +41,21 @@ type R9NanoPlatformBuilder struct {
 	globalStorage *mem.Storage
 
 	gpus []*GPU
+
+	migrationPolicy vm.MigrationPolicy
+	accessThreshold int
+	useOASIS        bool
+}
+
+func (b R9NanoPlatformBuilder) WithMigrationPolicy(p vm.MigrationPolicy, threshold int) R9NanoPlatformBuilder {
+	b.migrationPolicy = p
+	b.accessThreshold = threshold
+	return b
+}
+
+func (b R9NanoPlatformBuilder) WithOASIS() R9NanoPlatformBuilder {
+	b.useOASIS = true
+	return b
 }
 
 // MakeR9NanoBuilder creates a EmuBuilder with default parameters.
@@ -440,7 +455,10 @@ func (b R9NanoPlatformBuilder) createMMU(
 		WithFreq(1 * sim.GHz).
 		WithPageWalkingLatency(100).
 		WithLog2PageSize(b.log2PageSize).
-		WithPageTable(pageTable)
+		WithPageTable(pageTable).
+		WithPageMigrationPolicy(b.migrationPolicy).
+		WithAccessThreshold(b.accessThreshold).
+		WithOASIS(b.useOASIS)
 
 	mmuComponent := mmuBuilder.Build("MMU")
 

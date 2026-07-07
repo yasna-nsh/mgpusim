@@ -17,6 +17,8 @@ type Builder struct {
 	useMagicMemoryCopy  bool
 	middlewareD2HCycles int
 	middlewareH2DCycles int
+
+	migrationPolicy vm.MigrationPolicy
 }
 
 // MakeBuilder creates a driver builder with some default configuration
@@ -74,6 +76,11 @@ func (b Builder) WithH2DCycles(h2dCycles int) Builder {
 	return b
 }
 
+func (b Builder) WithPageMigrationPolicy(policy vm.MigrationPolicy) Builder {
+	b.migrationPolicy = policy
+	return b
+}
+
 // Build creates a driver.
 func (b Builder) Build(name string) *Driver {
 	driver := new(Driver)
@@ -82,7 +89,7 @@ func (b Builder) Build(name string) *Driver {
 
 	driver.Log2PageSize = b.log2PageSize
 
-	memAllocatorImpl := internal.NewMemoryAllocator(b.pageTable, b.log2PageSize)
+	memAllocatorImpl := internal.NewMemoryAllocator(b.pageTable, b.log2PageSize, b.migrationPolicy)
 	driver.memAllocator = memAllocatorImpl
 
 	distributorImpl := newDistributorImpl(memAllocatorImpl)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sarchlab/akita/v3/mem/vm"
 	"github.com/sarchlab/akita/v3/monitoring"
 	"github.com/sarchlab/akita/v3/sim"
 	"github.com/sarchlab/akita/v3/tracing"
@@ -139,6 +140,20 @@ func (r *Runner) buildTimingPlatform() {
 
 	if *magicMemoryCopy {
 		b = b.WithMagicMemoryCopy()
+	}
+
+	switch *migrationPolicyFlag {
+	case "on-touch":
+		b = b.WithMigrationPolicy(vm.PolicyOnTouch, 0)
+	case "access-counter":
+		b = b.WithMigrationPolicy(vm.PolicyAccessCounter, *accessThresholdFlag)
+	case "duplication":
+		b = b.WithMigrationPolicy(vm.PolicyDuplication, 0)
+	case "oasis":
+		b = b.WithMigrationPolicy(vm.PolicyOnTouch, 0) // with oasis, default policy is on touch
+		b = b.WithOASIS()
+	default:
+		panic("unknown migration policy: " + *migrationPolicyFlag)
 	}
 
 	r.platform = b.Build()
