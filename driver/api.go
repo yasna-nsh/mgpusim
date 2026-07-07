@@ -154,6 +154,15 @@ func (d *Driver) AllocateUnifiedMemory(
 ) Ptr {
 	ptr := Ptr(d.memAllocator.AllocateUnified(ctx.pid, byteSize))
 
+	// track object if using oasis
+	if d.useOASIS {
+		objId, err := d.objTracker.Track(ptr, byteSize)
+		if err != nil {
+			log.Print(err)
+		}
+		log.Printf("[allocating unified memory] objId = %d | %d bytes at 0x%16x", objId, byteSize, ptr)
+	}
+
 	ctx.buffers = append(ctx.buffers, &buffer{
 		vAddr:   ptr,
 		size:    byteSize,
@@ -204,8 +213,15 @@ func unique(in []int) []int {
 // with the function AllocateMemory earlier. Error will be returned if the ptr
 // provided is invalid.
 func (d *Driver) FreeMemory(ctx *Context, ptr Ptr) error {
-	// log.Printf("Free %d\n", ptr)
+	log.Printf("Free %d\n", ptr)
 	d.memAllocator.Free(uint64(ptr))
+
+	if d.useOASIS {
+		err := d.objTracker.Free(ptr)
+		if err != nil {
+			log.Print(err)
+		}
+	}
 
 	for i, buffer := range ctx.buffers {
 		if buffer.vAddr == ptr {

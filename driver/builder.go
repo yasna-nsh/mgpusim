@@ -19,6 +19,7 @@ type Builder struct {
 	middlewareH2DCycles int
 
 	migrationPolicy vm.MigrationPolicy
+	useOASIS        bool
 }
 
 // MakeBuilder creates a driver builder with some default configuration
@@ -81,6 +82,11 @@ func (b Builder) WithPageMigrationPolicy(policy vm.MigrationPolicy) Builder {
 	return b
 }
 
+func (b Builder) WithOASIS(oasis bool) Builder {
+	b.useOASIS = oasis
+	return b
+}
+
 // Build creates a driver.
 func (b Builder) Build(name string) *Driver {
 	driver := new(Driver)
@@ -120,6 +126,7 @@ func (b Builder) Build(name string) *Driver {
 
 	driver.enqueueSignal = make(chan bool)
 	driver.driverStopped = make(chan bool)
+	driver.useOASIS = b.useOASIS
 
 	b.createCPU(driver)
 

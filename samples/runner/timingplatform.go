@@ -240,6 +240,7 @@ func (b R9NanoPlatformBuilder) buildGPUDriver(
 		WithD2HCycles(8500).
 		WithH2DCycles(14500).
 		WithPageMigrationPolicy(b.migrationPolicy).
+		WithOASIS(b.useOASIS).
 		Build("Driver")
 	if b.visTracer != nil {
 		tracing.CollectTrace(gpuDriver, b.visTracer)
