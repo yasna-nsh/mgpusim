@@ -94,7 +94,7 @@ func MakeR9NanoGPUBuilder() R9NanoGPUBuilder {
 		log2CacheLineSize:              6,
 		log2PageSize:                   12,
 		log2MemoryBankInterleavingSize: 12,
-		l2CacheSize:                    2 * mem.MB,
+		l2CacheSize:                    256 * mem.KB,
 		dramSize:                       4 * mem.GB,
 	}
 	return b
@@ -832,12 +832,12 @@ func (b *R9NanoGPUBuilder) buildCP() {
 }
 
 func (b *R9NanoGPUBuilder) buildL2TLB() {
-	numWays := 64
+	numWays := 16
 	builder := tlb.MakeBuilder().
 		WithEngine(b.engine).
 		WithFreq(b.freq).
 		WithNumWays(numWays).
-		WithNumSets(int(b.dramSize / (1 << b.log2PageSize) / uint64(numWays))).
+		WithNumSets(int(512 / uint64(numWays))).
 		WithNumMSHREntry(64).
 		WithNumReqPerCycle(1024).
 		WithPageSize(1 << b.log2PageSize).
