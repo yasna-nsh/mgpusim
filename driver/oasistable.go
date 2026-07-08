@@ -63,6 +63,9 @@ func (t *OTable) Update(objID uint8, policy vm.MigrationPolicy) {
 
 func (t *OTable) RecordPageFault(objID uint8, write bool) {
 	ent := t.find(objID)
+	if ent == nil {
+		return
+	}
 	ent.mu.Lock()
 	defer ent.mu.Unlock()
 
