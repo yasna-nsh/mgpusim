@@ -17,25 +17,29 @@ type ObjectTracker struct {
 	mu      sync.Mutex
 	records []allocRecord
 	nextID  uint8
+	freeIDs []uint8
 }
 
 func (t *ObjectTracker) Track(baseAddr Ptr, size uint64) (uint8, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if int(t.nextID) >= maxObjects {
+	var id uint8
+	if len(t.freeIDs) > 0 {
+		id = t.freeIDs[len(t.freeIDs)-1]
+		t.freeIDs = t.freeIDs[:len(t.freeIDs)-1]
+	} else if int(t.nextID) < maxObjects {
+		id = t.nextID
+		t.nextID++
+	} else {
 		return 0, fmt.Errorf("objecttracker: number of objects exceeds %d", maxObjects)
 	}
-
-	id := t.nextID
-	t.nextID++
 
 	t.records = append(t.records, allocRecord{
 		baseAddr: baseAddr,
 		endAddr:  baseAddr + Ptr(size),
 		objID:    id,
 	})
-
 	return id, nil
 }
 
@@ -58,6 +62,7 @@ func (t *ObjectTracker) Free(baseAddr Ptr) error {
 
 	for i, r := range t.records {
 		if r.baseAddr == baseAddr {
+			t.freeIDs = append(t.freeIDs, r.objID)
 			t.records = append(t.records[:i], t.records[i+1:]...)
 			return nil
 		}

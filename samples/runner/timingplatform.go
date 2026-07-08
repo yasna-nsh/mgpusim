@@ -166,6 +166,7 @@ func (b R9NanoPlatformBuilder) Build() *Platform {
 		b.createConnection(b.engine, gpuDriver, mmuComponent)
 
 	mmuComponent.MigrationServiceProvider = gpuDriver.GetPortByName("MMU")
+	mmuComponent.PageFaultServiceProvider = gpuDriver.GetPortByName("MMUPF")
 
 	rdmaAddressTable := b.createRDMAAddrTable()
 	pmcAddressTable := b.createPMCPageTable()
@@ -396,7 +397,9 @@ func (b R9NanoPlatformBuilder) createConnection(
 		[]sim.Port{
 			gpuDriver.GetPortByName("GPU"),
 			gpuDriver.GetPortByName("MMU"),
+			gpuDriver.GetPortByName("MMUPF"),
 			mmuComponent.GetPortByName("Migration"),
+			mmuComponent.GetPortByName("PageFault"),
 			mmuComponent.GetPortByName("Top"),
 		})
 	return connector, rootComplexID

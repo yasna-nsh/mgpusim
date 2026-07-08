@@ -123,10 +123,16 @@ func (b Builder) Build(name string) *Driver {
 	driver.AddPort("GPU", driver.gpuPort)
 	driver.mmuPort = sim.NewLimitNumMsgPort(driver, 1, "Driver.ToMMU")
 	driver.AddPort("MMU", driver.mmuPort)
+	driver.mmuPFPort = sim.NewLimitNumMsgPort(driver, 1, "Driver.ToMMUPF")
+	driver.AddPort("MMUPF", driver.mmuPFPort)
 
 	driver.enqueueSignal = make(chan bool)
 	driver.driverStopped = make(chan bool)
 	driver.useOASIS = b.useOASIS
+	if b.useOASIS {
+		driver.objTable = NewOTable()
+		driver.objTracker = &ObjectTracker{}
+	}
 
 	b.createCPU(driver)
 

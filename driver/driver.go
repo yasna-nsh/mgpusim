@@ -35,8 +35,9 @@ type Driver struct {
 	contextMutex sync.Mutex
 	contexts     []*Context
 
-	mmuPort sim.Port
-	gpuPort sim.Port
+	mmuPort   sim.Port
+	mmuPFPort sim.Port
+	gpuPort   sim.Port
 
 	driverStopped      chan bool
 	enqueueSignal      chan bool
@@ -59,7 +60,8 @@ type Driver struct {
 	isCurrentlyMigratingOnePage     bool
 
 	RemotePMCPorts []sim.Port
-	objTracker     ObjectTracker
+	objTracker     *ObjectTracker
+	objTable       *OTable
 	useOASIS       bool
 }
 
@@ -177,6 +179,7 @@ func (d *Driver) Tick(now sim.VTimeInSec) bool {
 	madeProgress = d.processReturnReq(now) || madeProgress
 	madeProgress = d.processNewCommand(now) || madeProgress
 	madeProgress = d.parseFromMMU(now) || madeProgress
+	madeProgress = d.parsePageFaults(now) || madeProgress // NEW
 
 	return madeProgress
 }
@@ -557,6 +560,26 @@ func (d *Driver) parseFromMMU(now sim.VTimeInSec) bool {
 			reflect.TypeOf(req))
 	}
 
+	return true
+}
+
+func (d *Driver) parsePageFaults(now sim.VTimeInSec) bool {
+	req := d.mmuPFPort.Retrieve(now)
+	if req == nil {
+		return false
+	}
+	notif := req.(*vm.PageFaultNotification)
+	d.handlePageFaultNotification(notif)
+	return true
+}
+
+func (d *Driver) handlePageFaultNotification(req *vm.PageFaultNotification) bool {
+	if d.useOASIS {
+		objID, ok := d.objTracker.Identify(Ptr(req.VAddr))
+		if ok {
+			d.objTable.RecordPageFault(objID, req.Write)
+		}
+	}
 	return true
 }
 
