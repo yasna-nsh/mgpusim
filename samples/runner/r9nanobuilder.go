@@ -13,6 +13,7 @@ import (
 	"github.com/sarchlab/akita/v3/mem/mem"
 	"github.com/sarchlab/akita/v3/mem/vm"
 	"github.com/sarchlab/akita/v3/mem/vm/addresstranslator"
+	"github.com/sarchlab/akita/v3/mem/vm/gmmu"
 	"github.com/sarchlab/akita/v3/mem/vm/mmu"
 	"github.com/sarchlab/akita/v3/mem/vm/tlb"
 	"github.com/sarchlab/akita/v3/monitoring"
@@ -246,12 +247,14 @@ func (b R9NanoGPUBuilder) Build(name string, id uint64) *GPU {
 	b.buildL2Caches()
 	b.buildDRAMControllers()
 	b.buildCP()
-	b.buildL2TLB()
+	b.buildGMMU()  // gmmu's low module is mmu
+	b.buildL2TLB() // l2tlb's low module is gmmu
 
 	b.connectCP()
 	b.connectL2AndDRAM()
 	b.connectL1ToL2()
 	b.connectL1TLBToL2TLB()
+	b.connectL2TLBToGMMU()
 
 	b.populateExternalPorts()
 
@@ -267,10 +270,7 @@ func (b *R9NanoGPUBuilder) populateExternalPorts() {
 	b.gpu.Domain.AddPort("PageMigrationController",
 		b.pageMigrationController.GetPortByName("Remote"))
 
-	for i, l2TLB := range b.l2TLBs {
-		name := fmt.Sprintf("Translation_%02d", i)
-		b.gpu.Domain.AddPort(name, l2TLB.GetPortByName("Bottom"))
-	}
+	b.gpu.Domain.AddPort("Translation", b.gpu.gmmu.GetPortByName("Bottom"))
 }
 
 func (b *R9NanoGPUBuilder) createGPU(name string, id uint64) {
@@ -395,6 +395,14 @@ func (b *R9NanoGPUBuilder) connectL1TLBToL2TLB() {
 		l1sTLB.LowModule = b.l2TLBs[0].GetPortByName("Top")
 		tlbConn.PlugIn(l1sTLB.GetPortByName("Bottom"), 16)
 	}
+}
+
+func (b *R9NanoGPUBuilder) connectL2TLBToGMMU() {
+	conn := sim.NewDirectConnection(
+		b.gpuName+".L2TLBToGMMU", b.engine, b.freq)
+
+	conn.PlugIn(b.l2TLBs[0].GetPortByName("Bottom"), 64)
+	conn.PlugIn(b.gpu.gmmu.GetPortByName("Top"), 64)
 }
 
 func (b *R9NanoGPUBuilder) connectCPWithCUs() {
@@ -841,7 +849,7 @@ func (b *R9NanoGPUBuilder) buildL2TLB() {
 		WithNumMSHREntry(64).
 		WithNumReqPerCycle(1024).
 		WithPageSize(1 << b.log2PageSize).
-		WithLowModule(b.mmu.GetPortByName("Top"))
+		WithLowModule(b.gpu.gmmu.GetPortByName("Top"))
 
 	l2TLB := builder.Build(fmt.Sprintf("%s.L2TLB", b.gpuName))
 	b.l2TLBs = append(b.l2TLBs, l2TLB)
@@ -853,6 +861,32 @@ func (b *R9NanoGPUBuilder) buildL2TLB() {
 
 	if b.monitor != nil {
 		b.monitor.RegisterComponent(l2TLB)
+	}
+}
+
+// builds a gmmu for each gpu and a page table for each one
+func (b *R9NanoGPUBuilder) buildGMMU() {
+	PWLatency := 100       // based on GRIT
+	maxNumReqInFlight := 1 // TODO: set constant
+	builder := gmmu.MakeBuilder().
+		WithEngine(b.engine).
+		WithFreq(b.freq).
+		WithDeviceID(b.gpuID).
+		WithLog2PageSize(b.log2PageSize).
+		WithLowModule(b.mmu.GetPortByName("Top")).
+		WithMaxNumReqInFlight(maxNumReqInFlight).
+		WithPageTable(vm.NewPageTable(b.log2PageSize)).
+		WithPageWalkingLatency(PWLatency)
+	gmmu := builder.Build(fmt.Sprintf("%s.GMMU", b.gpuName))
+	b.gpu.gmmu = gmmu
+
+	// TODO: necessary action for tracing gmmu
+	if b.enableVisTracing {
+		tracing.CollectTrace(gmmu, b.visTracer)
+	}
+
+	if b.monitor != nil {
+		b.monitor.RegisterComponent(gmmu)
 	}
 }
 
