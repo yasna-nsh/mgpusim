@@ -35,9 +35,10 @@ type Driver struct {
 	contextMutex sync.Mutex
 	contexts     []*Context
 
-	mmuPort   sim.Port
-	mmuPFPort sim.Port
-	gpuPort   sim.Port
+	mmuPort      sim.Port
+	mmuPFPort    sim.Port
+	mmuPFPortDst sim.Port
+	gpuPort      sim.Port
 
 	driverStopped      chan bool
 	enqueueSignal      chan bool
@@ -63,6 +64,10 @@ type Driver struct {
 	objTracker     *ObjectTracker
 	objTable       *OTable
 	useOASIS       bool
+}
+
+func (d *Driver) SetMMUPFPortDst(p sim.Port) {
+	d.mmuPFPortDst = p
 }
 
 // Run starts a new threads that handles all commands in the command queues
@@ -569,15 +574,32 @@ func (d *Driver) parsePageFaults(now sim.VTimeInSec) bool {
 		return false
 	}
 	notif := req.(*vm.PageFaultNotification)
-	d.handlePageFaultNotification(notif)
+	d.handlePageFaultNotification(notif, now)
 	return true
 }
 
-func (d *Driver) handlePageFaultNotification(req *vm.PageFaultNotification) bool {
+func (d *Driver) handlePageFaultNotification(req *vm.PageFaultNotification, now sim.VTimeInSec) bool {
 	if d.useOASIS {
 		objID, ok := d.objTracker.Identify(Ptr(req.VAddr))
 		if ok {
-			d.objTable.RecordPageFault(objID, req.Write)
+			changed, newPolicy := d.objTable.RecordPageFault(objID, req.Write)
+			baseAddr, size := d.objTracker.GetBaseSize(objID)
+			if changed {
+				rsp := vm.PageFaultNotificationRspBuilder{}.
+					WithSendTime(now).
+					WithSrc(d.mmuPFPort).
+					WithDst(d.mmuPFPortDst).
+					WithPID(req.PID).
+					WithBaseVAddr(baseAddr).
+					WithSize(size).
+					WithChanged(changed).
+					WithNewPolicy(newPolicy).
+					Build()
+				err := d.mmuPFPort.Send(rsp)
+				if err != nil {
+					log.Panicln("Cannot send PF response to MMU.")
+				}
+			}
 		}
 	}
 	return true
@@ -728,6 +750,7 @@ func (d *Driver) preparePageForMigration(
 
 	newPage.IsMigrating = true
 	newPage.MigrationPolicy = page.MigrationPolicy
+	newPage.ReadOnly = page.ReadOnly
 	d.pageTable.Update(newPage)
 
 	return &newPage, oldPAddr

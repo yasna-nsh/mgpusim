@@ -255,6 +255,7 @@ func (b R9NanoGPUBuilder) Build(name string, id uint64) *GPU {
 	b.connectL1ToL2()
 	b.connectL1TLBToL2TLB()
 	b.connectL2TLBToGMMU()
+	b.connectATWithGMMU()
 
 	b.populateExternalPorts()
 
@@ -401,8 +402,32 @@ func (b *R9NanoGPUBuilder) connectL2TLBToGMMU() {
 	conn := sim.NewDirectConnection(
 		b.gpuName+".L2TLBToGMMU", b.engine, b.freq)
 
-	conn.PlugIn(b.l2TLBs[0].GetPortByName("Bottom"), 64)
-	conn.PlugIn(b.gpu.gmmu.GetPortByName("Top"), 64)
+	conn.PlugIn(b.l2TLBs[0].GetPortByName("Bottom"), 16)
+	conn.PlugIn(b.gpu.gmmu.GetPortByName("Top"), 16)
+}
+
+func (b *R9NanoGPUBuilder) connectATWithGMMU() {
+	conn := sim.NewDirectConnection(b.gpuName+".ATsToGMMU", b.engine, b.freq)
+	p := b.gpu.gmmu.GetPortByName("ToAT")
+	for _, at := range b.l1vAddrTrans {
+		gmmuPort := at.GetPortByName("ToGMMU")
+		conn.PlugIn(gmmuPort, 16)
+		at.SetGmmuDstPort(p)
+	}
+
+	for _, at := range b.l1sAddrTrans {
+		gmmuPort := at.GetPortByName("ToGMMU")
+		conn.PlugIn(gmmuPort, 16)
+		at.SetGmmuDstPort(p)
+	}
+
+	for _, at := range b.l1iAddrTrans {
+		gmmuPort := at.GetPortByName("ToGMMU")
+		conn.PlugIn(gmmuPort, 16)
+		at.SetGmmuDstPort(p)
+	}
+
+	conn.PlugIn(p, 16)
 }
 
 func (b *R9NanoGPUBuilder) connectCPWithCUs() {

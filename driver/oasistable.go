@@ -61,10 +61,13 @@ func (t *OTable) Update(objID uint8, policy vm.MigrationPolicy) {
 	ent.Policy = policy
 }
 
-func (t *OTable) RecordPageFault(objID uint8, write bool) {
+// returns true if policy changed
+func (t *OTable) RecordPageFault(objID uint8, write bool) (bool, vm.MigrationPolicy) {
+	changed := false
+
 	ent := t.find(objID)
 	if ent == nil {
-		return
+		log.Panicln("Object not found in OTable.")
 	}
 	ent.mu.Lock()
 	defer ent.mu.Unlock()
@@ -77,10 +80,13 @@ func (t *OTable) RecordPageFault(objID uint8, write bool) {
 		} else {
 			ent.Policy = vm.PolicyDuplication
 		}
+		changed = true
 	}
 	ent.PFCount++
 	log.Printf("[page fault] objID=%d, PF counter=%d\n", objID, ent.PFCount)
 	if ent.PFCount == 8 {
 		ent.PFCount = 0
 	}
+
+	return changed, ent.Policy
 }

@@ -69,3 +69,12 @@ func (t *ObjectTracker) Free(baseAddr Ptr) error {
 	}
 	return fmt.Errorf("objecttracker: no record for base addr 0x%x", baseAddr)
 }
+
+func (t *ObjectTracker) GetBaseSize(objID uint8) (uint64, uint64) {
+	for _, r := range t.records {
+		if r.objID == objID {
+			return uint64(r.baseAddr), uint64(r.endAddr - r.baseAddr)
+		}
+	}
+	return 0, 0
+}

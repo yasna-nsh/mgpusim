@@ -160,13 +160,13 @@ func (b R9NanoPlatformBuilder) Build() *Platform {
 	mmuComponent, pageTable := b.createMMU(b.engine)
 
 	gpuDriver := b.buildGPUDriver(pageTable)
-
 	gpuBuilder := b.createGPUBuilder(b.engine, gpuDriver, mmuComponent)
 	connector, rootComplexID :=
 		b.createConnection(b.engine, gpuDriver, mmuComponent)
 
 	mmuComponent.MigrationServiceProvider = gpuDriver.GetPortByName("MMU")
 	mmuComponent.PageFaultServiceProvider = gpuDriver.GetPortByName("MMUPF")
+	gpuDriver.SetMMUPFPortDst(mmuComponent.GetPortByName("PageFault"))
 
 	rdmaAddressTable := b.createRDMAAddrTable()
 	pmcAddressTable := b.createPMCPageTable()
@@ -325,6 +325,7 @@ func (b *R9NanoPlatformBuilder) createGPUs(
 			rdmaAddressTable, pmcAddressTable,
 			connector, pcieSwitchID)
 		deviceIDs[i] = connector.PlugInDevice(pcieSwitchID, gpu.Domain.Ports())
+		gpuBuilder.mmu.GMMUPorts[uint64(deviceIDs[i])] = gpu.gmmu.GetPortByName("Bottom")
 	}
 
 	// then meshed together with NVLink at 300GB/s
@@ -401,6 +402,7 @@ func (b R9NanoPlatformBuilder) createConnection(
 			mmuComponent.GetPortByName("Migration"),
 			mmuComponent.GetPortByName("PageFault"),
 			mmuComponent.GetPortByName("Top"),
+			mmuComponent.GetPortByName("ToGMMUs"),
 		})
 	return connector, rootComplexID
 }
