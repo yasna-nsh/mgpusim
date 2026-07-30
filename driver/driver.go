@@ -64,6 +64,14 @@ type Driver struct {
 	objTracker     *ObjectTracker
 	objTable       *OTable
 	useOASIS       bool
+
+	// pendingDuplicationCopy holds the freshly-allocated local copy for
+	// an in-flight duplication read, so preparePageMigrationRspToMMU can
+	// report its physical address back to the MMU. Deliberately NOT
+	// written into d.pageTable, since the canonical (PID,VAddr) entry
+	// must keep pointing at the true owner.
+	pendingDuplicationCopy *vm.Page
+	pfnotifrsps            []*vm.PageFaultNotificationRsp
 }
 
 func (d *Driver) SetMMUPFPortDst(p sim.Port) {
@@ -185,7 +193,7 @@ func (d *Driver) Tick(now sim.VTimeInSec) bool {
 	madeProgress = d.processNewCommand(now) || madeProgress
 	madeProgress = d.parseFromMMU(now) || madeProgress
 	madeProgress = d.parsePageFaults(now) || madeProgress // NEW
-
+	madeProgress = d.retryPFNotifRsps(now) || madeProgress
 	return madeProgress
 }
 
@@ -597,7 +605,7 @@ func (d *Driver) handlePageFaultNotification(req *vm.PageFaultNotification, now 
 					Build()
 				err := d.mmuPFPort.Send(rsp)
 				if err != nil {
-					log.Panicln("Cannot send PF response to MMU.")
+					d.pfnotifrsps = append(d.pfnotifrsps, rsp)
 				}
 			}
 		}
@@ -623,6 +631,11 @@ func (d *Driver) processRDMADrainRsp(
 	d.numRDMADrainACK--
 
 	if d.numRDMADrainACK == 0 {
+		if d.currentPageMigrationReq.IsDuplication && !d.currentPageMigrationReq.Write {
+			// Duplication read: don't need to shoot down.
+			// RDMA was still drained above, still needs to be resumed later (processPageMigrationRspFromCP).
+			return d.beginPageDataCopy(now)
+		}
 		d.sendShootDownReqs(now)
 	}
 
@@ -649,6 +662,11 @@ func (d *Driver) sendShootDownReqs(now sim.VTimeInSec) bool {
 	pid := d.currentPageMigrationReq.PID
 	d.numShootDownACK = uint64(len(accessingGPUs))
 
+	if d.numShootDownACK == 0 {
+		// Nothing to shoot down
+		return d.beginPageDataCopy(now)
+	}
+
 	for i := 0; i < len(accessingGPUs); i++ {
 		toShootdownGPU := accessingGPUs[i] - 1
 		shootDownReq := protocol.NewShootdownCommand(
@@ -668,42 +686,53 @@ func (d *Driver) processShootdownCompleteRsp(
 	d.numShootDownACK--
 
 	if d.numShootDownACK == 0 {
-		toRequestFromGPU := d.currentPageMigrationReq.CurrPageHostGPU
-		toRequestFromPMCPort := d.RemotePMCPorts[toRequestFromGPU-1]
-
-		migrationInfo := d.currentPageMigrationReq.MigrationInfo
-
-		requestingGPUs := d.findRequestingGPUs(migrationInfo)
-		context := d.findContext(d.currentPageMigrationReq.PID)
-
-		pageVaddrs := make(map[uint64][]uint64)
-
-		for i := 0; i < len(requestingGPUs); i++ {
-			pageVaddrs[requestingGPUs[i]] =
-				migrationInfo.GPUReqToVAddrMap[requestingGPUs[i]+1]
-		}
-
-		for gpuID, vAddrs := range pageVaddrs {
-			for i := 0; i < len(vAddrs); i++ {
-				vAddr := vAddrs[i]
-				page, oldPAddr :=
-					d.preparePageForMigration(vAddr, context, gpuID)
-
-				req := protocol.NewPageMigrationReqToCP(now, d.gpuPort,
-					d.GPUs[gpuID])
-				req.DestinationPMCPort = toRequestFromPMCPort
-				req.ToReadFromPhysicalAddress = oldPAddr
-				req.ToWriteToPhysicalAddress = page.PAddr
-				req.PageSize = d.currentPageMigrationReq.PageSize
-
-				d.migrationReqToSendToCP = append(d.migrationReqToSendToCP, req)
-				d.numPagesMigratingACK++
-			}
-		}
-		return true
+		return d.beginPageDataCopy(now)
 	}
 
 	return false
+}
+
+func (d *Driver) beginPageDataCopy(now sim.VTimeInSec) bool {
+	toRequestFromGPU := d.currentPageMigrationReq.CurrPageHostGPU
+	toRequestFromPMCPort := d.RemotePMCPorts[toRequestFromGPU-1]
+
+	migrationInfo := d.currentPageMigrationReq.MigrationInfo
+
+	requestingGPUs := d.findRequestingGPUs(migrationInfo)
+	context := d.findContext(d.currentPageMigrationReq.PID)
+
+	isDupRead := d.currentPageMigrationReq.IsDuplication &&
+		!d.currentPageMigrationReq.Write
+
+	pageVaddrs := make(map[uint64][]uint64)
+
+	for i := 0; i < len(requestingGPUs); i++ {
+		pageVaddrs[requestingGPUs[i]] =
+			migrationInfo.GPUReqToVAddrMap[requestingGPUs[i]+1]
+	}
+
+	for gpuID, vAddrs := range pageVaddrs {
+		for i := 0; i < len(vAddrs); i++ {
+			vAddr := vAddrs[i]
+			page, oldPAddr :=
+				d.preparePageForMigration(vAddr, context, gpuID, isDupRead)
+
+			if isDupRead {
+				d.pendingDuplicationCopy = page
+			}
+
+			req := protocol.NewPageMigrationReqToCP(now, d.gpuPort,
+				d.GPUs[gpuID])
+			req.DestinationPMCPort = toRequestFromPMCPort
+			req.ToReadFromPhysicalAddress = oldPAddr
+			req.ToWriteToPhysicalAddress = page.PAddr
+			req.PageSize = d.currentPageMigrationReq.PageSize
+
+			d.migrationReqToSendToCP = append(d.migrationReqToSendToCP, req)
+			d.numPagesMigratingACK++
+		}
+	}
+	return true
 }
 
 func (d *Driver) findRequestingGPUs(
@@ -737,6 +766,7 @@ func (d *Driver) preparePageForMigration(
 	vAddr uint64,
 	context *Context,
 	gpuID uint64,
+	isDupRead bool,
 ) (*vm.Page, uint64) {
 	page, found := d.pageTable.Find(context.pid, vAddr)
 	if !found {
@@ -751,6 +781,14 @@ func (d *Driver) preparePageForMigration(
 	newPage.IsMigrating = true
 	newPage.MigrationPolicy = page.MigrationPolicy
 	newPage.ReadOnly = page.ReadOnly
+
+	if isDupRead {
+		// read-only copy, don't change pid, vaddr
+		newPage.ReadOnly = true
+		newPage.IsMigrating = false
+		return &newPage, oldPAddr
+	}
+
 	d.pageTable.Update(newPage)
 
 	return &newPage, oldPAddr
@@ -786,7 +824,15 @@ func (d *Driver) processPageMigrationRspFromCP(
 	d.isCurrentlyMigratingOnePage = false
 
 	if d.numPagesMigratingACK == 0 {
-		d.prepareGPURestartReqs(now)
+		isDupRead := d.currentPageMigrationReq.IsDuplication &&
+			!d.currentPageMigrationReq.Write
+
+		if isDupRead {
+			// no shootdown -> no GPU-side pause to undo
+			d.prepareRDMARestartReqs(now)
+		} else {
+			d.prepareGPURestartReqs(now)
+		}
 		d.preparePageMigrationRspToMMU(now)
 	}
 
@@ -795,6 +841,13 @@ func (d *Driver) processPageMigrationRspFromCP(
 
 func (d *Driver) prepareGPURestartReqs(now sim.VTimeInSec) {
 	accessingGPUs := d.currentPageMigrationReq.CurrAccessingGPUs
+
+	if len(accessingGPUs) == 0 {
+		// duplication write to a page nobody held a copy of
+		// no shootdown -> no GPU-side pause to undo
+		d.prepareRDMARestartReqs(now)
+		return
+	}
 
 	for i := 0; i < len(accessingGPUs); i++ {
 		restartGPUID := accessingGPUs[i] - 1
@@ -834,6 +887,17 @@ func (d *Driver) preparePageMigrationRspToMMU(now sim.VTimeInSec) {
 		}
 	}
 	req.RspToTop = d.currentPageMigrationReq.RespondToTop
+
+	if d.currentPageMigrationReq.IsDuplication &&
+		!d.currentPageMigrationReq.Write {
+		// NEW field -- add CopyPage *vm.Page to
+		// vm.PageMigrationRspFromDriver. mmu.go's processMigrationReturn
+		// uses this instead of re-reading the canonical (owner-pointing)
+		// page table entry when responding to the requester.
+		req.CopyPage = d.pendingDuplicationCopy
+		d.pendingDuplicationCopy = nil
+	}
+
 	d.toSendToMMU = req
 }
 
@@ -883,4 +947,21 @@ func (d *Driver) sendToMMU(now sim.VTimeInSec) bool {
 	}
 
 	return false
+}
+
+func (d *Driver) retryPFNotifRsps(now sim.VTimeInSec) bool {
+	if len(d.pfnotifrsps) == 0 {
+		return false
+	}
+
+	rsp := d.pfnotifrsps[0]
+	rsp.SendTime = now
+	err := d.mmuPFPort.Send(rsp)
+	if err != nil {
+		log.Printf("failing here %v", rsp)
+		return false
+	}
+	log.Printf("sent successfully rsp %v", rsp)
+	d.pfnotifrsps = d.pfnotifrsps[1:]
+	return true
 }

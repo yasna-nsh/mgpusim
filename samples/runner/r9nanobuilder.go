@@ -382,28 +382,36 @@ func (b *R9NanoGPUBuilder) connectL1TLBToL2TLB() {
 
 	tlbConn.PlugIn(b.l2TLBs[0].GetPortByName("Top"), 64)
 
+	var l1BottomPorts []sim.Port
 	for _, l1vTLB := range b.l1vTLBs {
+		l1BottomPorts = append(l1BottomPorts, l1vTLB.GetPortByName("Bottom"))
 		l1vTLB.LowModule = b.l2TLBs[0].GetPortByName("Top")
 		tlbConn.PlugIn(l1vTLB.GetPortByName("Bottom"), 16)
 	}
 
 	for _, l1iTLB := range b.l1iTLBs {
+		l1BottomPorts = append(l1BottomPorts, l1iTLB.GetPortByName("Bottom"))
 		l1iTLB.LowModule = b.l2TLBs[0].GetPortByName("Top")
 		tlbConn.PlugIn(l1iTLB.GetPortByName("Bottom"), 16)
 	}
 
 	for _, l1sTLB := range b.l1sTLBs {
+		l1BottomPorts = append(l1BottomPorts, l1sTLB.GetPortByName("Bottom"))
 		l1sTLB.LowModule = b.l2TLBs[0].GetPortByName("Top")
 		tlbConn.PlugIn(l1sTLB.GetPortByName("Bottom"), 16)
 	}
+
+	b.l2TLBs[0].SetChildPorts(l1BottomPorts)
 }
 
 func (b *R9NanoGPUBuilder) connectL2TLBToGMMU() {
 	conn := sim.NewDirectConnection(
 		b.gpuName+".L2TLBToGMMU", b.engine, b.freq)
 
-	conn.PlugIn(b.l2TLBs[0].GetPortByName("Bottom"), 16)
+	l2Bottom := b.l2TLBs[0].GetPortByName("Bottom")
+	conn.PlugIn(l2Bottom, 16)
 	conn.PlugIn(b.gpu.gmmu.GetPortByName("Top"), 16)
+	b.gpu.gmmu.SetL2TLBTopDst(l2Bottom)
 }
 
 func (b *R9NanoGPUBuilder) connectATWithGMMU() {
@@ -891,8 +899,8 @@ func (b *R9NanoGPUBuilder) buildL2TLB() {
 
 // builds a gmmu for each gpu and a page table for each one
 func (b *R9NanoGPUBuilder) buildGMMU() {
-	PWLatency := 100       // based on GRIT
-	maxNumReqInFlight := 1 // TODO: set constant
+	PWLatency := 100          // based on GRIT
+	maxNumReqInFlight := 1024 // TODO: set constant
 	builder := gmmu.MakeBuilder().
 		WithEngine(b.engine).
 		WithFreq(b.freq).
