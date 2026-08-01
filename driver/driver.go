@@ -958,10 +958,8 @@ func (d *Driver) retryPFNotifRsps(now sim.VTimeInSec) bool {
 	rsp.SendTime = now
 	err := d.mmuPFPort.Send(rsp)
 	if err != nil {
-		log.Printf("failing here %v", rsp)
 		return false
 	}
-	log.Printf("sent successfully rsp %v", rsp)
 	d.pfnotifrsps = d.pfnotifrsps[1:]
 	return true
 }

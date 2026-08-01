@@ -74,16 +74,19 @@ func (t *OTable) RecordPageFault(objID uint8, write bool) (bool, vm.MigrationPol
 
 	// update
 	if ent.PFCount == 0 {
-		log.Printf("[update policy] objID=%d write=%v\n", objID, write)
+		oldPolicy := ent.Policy
 		if write {
 			ent.Policy = vm.PolicyAccessCounter
 		} else {
 			ent.Policy = vm.PolicyDuplication
 		}
-		changed = true
+		changed = oldPolicy != ent.Policy
+		if changed {
+			log.Printf("[update policy] objID=%d oldpolicy=%v newpolicy=%v", objID, oldPolicy, ent.Policy)
+		}
 	}
 	ent.PFCount++
-	log.Printf("[page fault] objID=%d, PF counter=%d\n", objID, ent.PFCount)
+	// log.Printf("[page fault] objID=%d, PF counter=%d\n", objID, ent.PFCount)
 	if ent.PFCount == 8 {
 		ent.PFCount = 0
 	}

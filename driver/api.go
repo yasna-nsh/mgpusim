@@ -162,7 +162,7 @@ func (d *Driver) AllocateUnifiedMemory(
 		} else {
 			d.objTable.Insert(objID)
 		}
-		log.Printf("[allocating unified memory] objId = %d | %d bytes at 0x%16x", objID, byteSize, ptr)
+		log.Printf("[allocating unified memory] objId = %d | %d bytes at 0x%x", objID, byteSize, ptr)
 	}
 
 	ctx.buffers = append(ctx.buffers, &buffer{
@@ -215,7 +215,7 @@ func unique(in []int) []int {
 // with the function AllocateMemory earlier. Error will be returned if the ptr
 // provided is invalid.
 func (d *Driver) FreeMemory(ctx *Context, ptr Ptr) error {
-	log.Printf("Free %d\n", ptr)
+	// log.Printf("Free %d\n", ptr)
 	d.memAllocator.Free(uint64(ptr))
 
 	if d.useOASIS {

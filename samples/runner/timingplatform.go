@@ -325,7 +325,7 @@ func (b *R9NanoPlatformBuilder) createGPUs(
 			rdmaAddressTable, pmcAddressTable,
 			connector, pcieSwitchID)
 		deviceIDs[i] = connector.PlugInDevice(pcieSwitchID, gpu.Domain.Ports())
-		gpuBuilder.mmu.GMMUPorts[uint64(deviceIDs[i])] = gpu.gmmu.GetPortByName("Bottom")
+		gpuBuilder.mmu.GMMUPorts[uint64(deviceIDs[i])-1] = gpu.gmmu.GetPortByName("Bottom")
 	}
 
 	// then meshed together with NVLink at 300GB/s
