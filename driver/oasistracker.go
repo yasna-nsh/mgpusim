@@ -2,6 +2,7 @@ package driver
 
 import (
 	"fmt"
+	"log"
 	"sync"
 )
 
@@ -77,4 +78,35 @@ func (t *ObjectTracker) GetBaseSize(objID uint8) (uint64, uint64) {
 		}
 	}
 	return 0, 0
+}
+
+func (t *ObjectTracker) PrintPagePolicyPercentage(objTable *OTable) {
+	var percentages [3]uint64
+	total := uint64(0)
+	for _, e := range t.records {
+		pcount := t.calcPageCount(e)
+		policy := objTable.find(e.objID).Policy
+		percentages[policy] += pcount
+		total += pcount
+	}
+	log.Printf("[policy percentage] total=%v, %v", total, percentages)
+}
+
+func (t *ObjectTracker) GetTotalPCount() uint64 {
+	//
+	total := uint64(0)
+	for _, e := range t.records {
+		total += t.calcPageCount(e)
+	}
+	return total
+}
+
+func (t *ObjectTracker) calcPageCount(rec allocRecord) uint64 {
+	size := uint64(rec.endAddr - rec.baseAddr)
+	psize := uint64(4096)
+	pcount := size / psize
+	if size%psize != 0 {
+		pcount++
+	}
+	return pcount
 }

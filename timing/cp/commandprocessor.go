@@ -349,7 +349,7 @@ func (p *CommandProcessor) processShootdownCommand(
 	now sim.VTimeInSec,
 	cmd *protocol.ShootDownCommand,
 ) bool {
-	if p.shootDownInProcess == true {
+	if p.shootDownInProcess || p.numCacheACK > 0 {
 		return false
 	}
 
@@ -561,6 +561,10 @@ func (p *CommandProcessor) processGPURestartReq(
 	now sim.VTimeInSec,
 	cmd *protocol.GPURestartReq,
 ) bool {
+	if p.numCacheACK > 0 || p.shootDownInProcess {
+		return false
+	}
+
 	for _, port := range p.L2Caches {
 		p.restartCache(now, port)
 	}
@@ -719,7 +723,7 @@ func (p *CommandProcessor) processFlushReq(
 	now sim.VTimeInSec,
 	req *protocol.FlushReq,
 ) bool {
-	if p.numCacheACK > 0 {
+	if p.numCacheACK > 0 || p.shootDownInProcess {
 		return false
 	}
 

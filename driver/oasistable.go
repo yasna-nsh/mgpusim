@@ -62,7 +62,7 @@ func (t *OTable) Update(objID uint8, policy vm.MigrationPolicy) {
 }
 
 // returns true if policy changed
-func (t *OTable) RecordPageFault(objID uint8, write bool) (bool, vm.MigrationPolicy) {
+func (t *OTable) RecordPageFault(objID uint8, write bool, capacity uint64, usage uint64) (bool, vm.MigrationPolicy) {
 	changed := false
 
 	ent := t.find(objID)
@@ -78,7 +78,12 @@ func (t *OTable) RecordPageFault(objID uint8, write bool) (bool, vm.MigrationPol
 		if write {
 			ent.Policy = vm.PolicyAccessCounter
 		} else {
-			ent.Policy = vm.PolicyDuplication
+			// skip changing to duplication policy if
+			// if float64(usage) <= 1.25*float64(capacity) {
+			// 	ent.Policy = vm.PolicyDuplication
+			// } else {
+			// 	log.Printf("[skipped duplication] objid=%v, capacity=%v, usage=%v", objID, capacity, usage)
+			// }
 		}
 		changed = oldPolicy != ent.Policy
 		if changed {

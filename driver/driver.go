@@ -590,7 +590,8 @@ func (d *Driver) handlePageFaultNotification(req *vm.PageFaultNotification, now 
 	if d.useOASIS {
 		objID, ok := d.objTracker.Identify(Ptr(req.VAddr))
 		if ok {
-			changed, newPolicy := d.objTable.RecordPageFault(objID, req.Write)
+			size := d.objTracker.GetTotalPCount() * 4096
+			changed, newPolicy := d.objTable.RecordPageFault(objID, req.Write, d.globalStorage.Capacity, uint64(size))
 			baseAddr, size := d.objTracker.GetBaseSize(objID)
 			if changed {
 				rsp := vm.PageFaultNotificationRspBuilder{}.
@@ -607,6 +608,8 @@ func (d *Driver) handlePageFaultNotification(req *vm.PageFaultNotification, now 
 				if err != nil {
 					d.pfnotifrsps = append(d.pfnotifrsps, rsp)
 				}
+				// calculate and print percentage
+				d.objTracker.PrintPagePolicyPercentage(d.objTable)
 			}
 		}
 	}
