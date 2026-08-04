@@ -79,11 +79,12 @@ func (t *OTable) RecordPageFault(objID uint8, write bool, capacity uint64, usage
 			ent.Policy = vm.PolicyAccessCounter
 		} else {
 			// skip changing to duplication policy if
-			// if float64(usage) <= 1.25*float64(capacity) {
-			// 	ent.Policy = vm.PolicyDuplication
-			// } else {
-			// 	log.Printf("[skipped duplication] objid=%v, capacity=%v, usage=%v", objID, capacity, usage)
-			// }
+			if float64(usage) <= float64(capacity) {
+				ent.Policy = vm.PolicyDuplication
+			} else {
+				ent.Policy = vm.PolicyAccessCounter
+				log.Printf("[skipped duplication] objid=%v, capacity=%v, usage=%v", objID, capacity, usage)
+			}
 		}
 		changed = oldPolicy != ent.Policy
 		if changed {
@@ -91,7 +92,6 @@ func (t *OTable) RecordPageFault(objID uint8, write bool, capacity uint64, usage
 		}
 	}
 	ent.PFCount++
-	// log.Printf("[page fault] objID=%d, PF counter=%d\n", objID, ent.PFCount)
 	if ent.PFCount == 8 {
 		ent.PFCount = 0
 	}

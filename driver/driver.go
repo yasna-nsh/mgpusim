@@ -65,13 +65,10 @@ type Driver struct {
 	objTable       *OTable
 	useOASIS       bool
 
-	// pendingDuplicationCopy holds the freshly-allocated local copy for
-	// an in-flight duplication read, so preparePageMigrationRspToMMU can
-	// report its physical address back to the MMU. Deliberately NOT
-	// written into d.pageTable, since the canonical (PID,VAddr) entry
-	// must keep pointing at the true owner.
 	pendingDuplicationCopy *vm.Page
 	pfnotifrsps            []*vm.PageFaultNotificationRsp
+
+	migrationInvolvedGPUs map[uint64]bool
 }
 
 func (d *Driver) SetMMUPFPortDst(p sim.Port) {
@@ -555,7 +552,18 @@ func (d *Driver) findCommandByReqID(reqID string) (
 
 func (d *Driver) parseFromMMU(now sim.VTimeInSec) bool {
 	if d.isCurrentlyHandlingMigrationReq {
-		return false
+		item := d.mmuPort.Peek()
+		if item == nil {
+			return false
+		}
+
+		switch item.(type) {
+		case *vm.PageMigrationRspFromDriver:
+			d.mmuPort.Retrieve(now)
+			return true
+		default:
+			return false
+		}
 	}
 
 	req := d.mmuPort.Retrieve(now)
@@ -568,6 +576,8 @@ func (d *Driver) parseFromMMU(now sim.VTimeInSec) bool {
 		d.currentPageMigrationReq = req
 		d.isCurrentlyHandlingMigrationReq = true
 		d.initiateRDMADrain(now)
+	case *vm.PageMigrationRspFromDriver:
+		return true
 	default:
 		log.Panicf("Driver cannot handle request of type %s",
 			reflect.TypeOf(req))
@@ -617,9 +627,12 @@ func (d *Driver) handlePageFaultNotification(req *vm.PageFaultNotification, now 
 }
 
 func (d *Driver) initiateRDMADrain(now sim.VTimeInSec) bool {
-	for i := 0; i < len(d.GPUs); i++ {
+	involved := d.findMigrationInvolvedGPUs()
+	d.migrationInvolvedGPUs = involved
+
+	for gpuID := range involved {
 		req := protocol.NewRDMADrainCmdFromDriver(now, d.gpuPort,
-			d.GPUs[i])
+			d.GPUs[gpuID-1])
 		d.requestsToSend = append(d.requestsToSend, req)
 		d.numRDMADrainACK++
 	}
@@ -627,11 +640,42 @@ func (d *Driver) initiateRDMADrain(now sim.VTimeInSec) bool {
 	return true
 }
 
+func (d *Driver) findMigrationInvolvedGPUs() map[uint64]bool {
+	involved := make(map[uint64]bool)
+
+	if d.currentPageMigrationReq != nil {
+		for _, gpuID := range d.currentPageMigrationReq.CurrAccessingGPUs {
+			if d.isValidGPUID(gpuID) {
+				involved[gpuID] = true
+			}
+		}
+
+		hostGPU := d.currentPageMigrationReq.CurrPageHostGPU
+		if d.isValidGPUID(hostGPU) {
+			involved[hostGPU] = true
+		}
+	}
+
+	if len(involved) == 0 {
+		for i := 1; i <= len(d.GPUs); i++ {
+			involved[uint64(i)] = true
+		}
+	}
+
+	return involved
+}
+
+func (d *Driver) isValidGPUID(gpuID uint64) bool {
+	return gpuID > 0 && gpuID <= uint64(len(d.GPUs))
+}
+
 func (d *Driver) processRDMADrainRsp(
 	now sim.VTimeInSec,
 	req *protocol.RDMADrainRspToDriver,
 ) bool {
-	d.numRDMADrainACK--
+	if d.numRDMADrainACK > 0 {
+		d.numRDMADrainACK--
+	}
 
 	if d.numRDMADrainACK == 0 {
 		if d.currentPageMigrationReq.IsDuplication && !d.currentPageMigrationReq.Write {
@@ -639,7 +683,8 @@ func (d *Driver) processRDMADrainRsp(
 			// RDMA was still drained above, still needs to be resumed later (processPageMigrationRspFromCP).
 			return d.beginPageDataCopy(now)
 		}
-		d.sendShootDownReqs(now)
+		d.numShootDownACK = 0
+		d.processShootdownCompleteRsp(now, nil)
 	}
 
 	return true
@@ -686,7 +731,13 @@ func (d *Driver) processShootdownCompleteRsp(
 	now sim.VTimeInSec,
 	req *protocol.ShootDownCompleteRsp,
 ) bool {
-	d.numShootDownACK--
+	if d.currentPageMigrationReq == nil {
+		return true
+	}
+
+	if d.numShootDownACK > 0 {
+		d.numShootDownACK--
+	}
 
 	if d.numShootDownACK == 0 {
 		return d.beginPageDataCopy(now)
@@ -823,10 +874,14 @@ func (d *Driver) processPageMigrationRspFromCP(
 	now sim.VTimeInSec,
 	rsp *protocol.PageMigrationRspToDriver,
 ) bool {
-	d.numPagesMigratingACK--
+	if d.numPagesMigratingACK > 0 {
+		d.numPagesMigratingACK--
+	}
 	d.isCurrentlyMigratingOnePage = false
 
 	if d.numPagesMigratingACK == 0 {
+		d.numRestartACK = 0
+
 		isDupRead := d.currentPageMigrationReq.IsDuplication &&
 			!d.currentPageMigrationReq.Write
 
@@ -908,7 +963,9 @@ func (d *Driver) handleGPURestartRsp(
 	now sim.VTimeInSec,
 	req *protocol.GPURestartRsp,
 ) bool {
-	d.numRestartACK--
+	if d.numRestartACK > 0 {
+		d.numRestartACK--
+	}
 	if d.numRestartACK == 0 {
 		d.prepareRDMARestartReqs(now)
 	}
@@ -916,22 +973,44 @@ func (d *Driver) handleGPURestartRsp(
 }
 
 func (d *Driver) prepareRDMARestartReqs(now sim.VTimeInSec) {
-	for i := 0; i < len(d.GPUs); i++ {
+	if len(d.migrationInvolvedGPUs) == 0 {
+		d.migrationInvolvedGPUs = d.findMigrationInvolvedGPUs()
+	}
+
+	for gpuID := range d.migrationInvolvedGPUs {
 		req := protocol.NewRDMARestartCmdFromDriver(now,
-			d.gpuPort, d.GPUs[i])
+			d.gpuPort, d.GPUs[gpuID-1])
 		d.requestsToSend = append(d.requestsToSend, req)
 		d.numRDMARestartACK++
 	}
+	d.migrationInvolvedGPUs = nil
 }
 
 func (d *Driver) processRDMARestartRspToDriver(
 	now sim.VTimeInSec,
 	rsp *protocol.RDMARestartRspToDriver) bool {
-	d.numRDMARestartACK--
+	if d.numRDMARestartACK > 0 {
+		d.numRDMARestartACK--
+	}
 
 	if d.numRDMARestartACK == 0 {
+		if d.currentPageMigrationReq != nil && d.currentPageMigrationReq.RespondToTop {
+			d.preparePageMigrationRspToMMU(now)
+		} else {
+			d.toSendToMMU = nil
+		}
+
 		d.currentPageMigrationReq = nil
 		d.isCurrentlyHandlingMigrationReq = false
+
+		d.numRDMADrainACK = 0
+		d.numShootDownACK = 0
+		d.numPagesMigratingACK = 0
+		d.numRestartACK = 0
+		d.numRDMARestartACK = 0
+		d.isCurrentlyMigratingOnePage = false
+		d.migrationReqToSendToCP = nil
+
 		return true
 	}
 	return true

@@ -123,7 +123,7 @@ func (b Builder) Build(name string) *Driver {
 	driver.AddPort("GPU", driver.gpuPort)
 	driver.mmuPort = sim.NewLimitNumMsgPort(driver, 16, "Driver.ToMMU")
 	driver.AddPort("MMU", driver.mmuPort)
-	driver.mmuPFPort = sim.NewLimitNumMsgPort(driver, 16, "Driver.ToMMUPF")
+	driver.mmuPFPort = sim.NewLimitNumMsgPort(driver, 64, "Driver.ToMMUPF")
 	driver.AddPort("MMUPF", driver.mmuPFPort)
 
 	driver.enqueueSignal = make(chan bool)
